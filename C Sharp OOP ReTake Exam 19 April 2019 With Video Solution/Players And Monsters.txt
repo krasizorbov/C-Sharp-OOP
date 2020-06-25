@@ -1,0 +1,957 @@
+namespace PlayersAndMonsters.Common
+{
+    public static class ConstantMessages
+    {
+        public const string SuccessfullyAddedPlayer =
+            "Successfully added player of type {0} with username: {1}";
+
+        public const string SuccessfullyAddedCard =
+            "Successfully added card of type {0} with name: {1}";
+
+        public const string SuccessfullyAddedPlayerWithCards
+            = "Successfully added card: {0} to user: {1}";
+
+        public const string FightInfo
+            = "Attack user health {0} - Enemy user health {1}";
+
+        public const string PlayerReportInfo
+            = "Username: {0} - Health: {1} - Cards {2}";
+
+        public const string CardReportInfo
+            = "Card: {0} - Damage: {1}";
+
+        public const string DefaultReportSeparator
+            = "###";
+    }
+}
+
+
+********************************
+
+
+namespace PlayersAndMonsters.Common
+{
+    using System;
+
+    public static class Validator
+    {
+        public static void ThrowIfNullOrEmpty(string str, string message)
+        {
+            if (string.IsNullOrEmpty(str))
+            {
+                throw new ArgumentException(message);
+            }
+        }
+
+        public static void ThrowIfNegative(int number, string message)
+        {
+            if (number < 0)
+            {
+                throw new ArgumentException(message);
+            }
+        }
+
+        public static void ThrowIfNull(object obj, string message)
+        {
+            if (obj == null)
+            {
+                throw new ArgumentException(message);
+            }
+        }
+    }
+}
+
+
+*****************************
+
+
+namespace PlayersAndMonsters.Core
+{
+    using System.Linq;
+    using PlayersAndMonsters.Core.Contracts;
+
+    public class CommandInterpreter : ICommandInterpreter
+    {
+        private IManagerController managerController;
+
+        public CommandInterpreter(IManagerController managerController)
+        {
+            this.managerController = managerController;
+        }
+
+        public string Execute(string[] inputArgs)
+        {
+            string commandName = inputArgs[0];
+            string[] commandArgs = inputArgs
+                .Skip(1)
+                .ToArray();
+
+            var method = typeof(ManagerController)
+                .GetMethod(commandName);
+
+            string result = (string)method.Invoke(this.managerController, commandArgs);
+
+            return result;
+        }
+    }
+}
+
+
+********************************
+
+
+namespace PlayersAndMonsters.Core
+{
+    using System;
+    using System.Reflection;
+    using PlayersAndMonsters.Core.Contracts;
+    using PlayersAndMonsters.IO.Contracts;
+
+    public class Engine : IEngine
+    {
+        private ICommandInterpreter commandInterpreter;
+        private IReader reader;
+        private IWriter writer;
+
+        public Engine(ICommandInterpreter commandInterpreter, IReader reader, IWriter writer)
+        {
+            this.commandInterpreter = commandInterpreter;
+            this.reader = reader;
+            this.writer = writer;
+        }
+
+        public void Run()
+        {
+            string command = this.reader.ReadLine();
+
+            while (command != "Exit")
+            {
+                string[] inputArgs = command
+                    .Split(" ", StringSplitOptions.RemoveEmptyEntries);
+
+                try
+                {
+                    string result = this.commandInterpreter.Execute(inputArgs);
+                    this.writer.WriteLine(result);
+                }
+                catch (TargetInvocationException tie)
+                {
+                    this.writer.WriteLine(tie.InnerException.Message);
+                }
+
+                command = this.reader.ReadLine();
+            }
+        }
+    }
+}
+
+
+*******************************
+
+
+namespace PlayersAndMonsters.Core
+{
+    using System.Linq;
+    using System.Text;
+    using Contracts;
+    using PlayersAndMonsters.Common;
+    using PlayersAndMonsters.Core.Factories.Contracts;
+    using PlayersAndMonsters.Models.BattleFields.Contracts;
+    using PlayersAndMonsters.Models.Cards.Contracts;
+    using PlayersAndMonsters.Models.Players.Contracts;
+    using PlayersAndMonsters.Repositories.Contracts;
+
+    public class ManagerController : IManagerController
+    {
+        private IPlayerRepository playerRepository;
+        private ICardRepository cardRepository;
+        private IPlayerFactory playerFactory;
+        private ICardFactory cardFactory;
+        private IBattleField battleField;
+
+        public ManagerController(IPlayerRepository playerRepository, ICardRepository cardRepository, IPlayerFactory playerFactory, ICardFactory cardFactory, IBattleField battleField)
+        {
+            this.playerRepository = playerRepository;
+            this.cardRepository = cardRepository;
+            this.playerFactory = playerFactory;
+            this.cardFactory = cardFactory;
+            this.battleField = battleField;
+        }
+
+        public string AddPlayer(string type, string username)
+        {
+            IPlayer player = this.playerFactory.CreatePlayer(type, username);
+
+            this.playerRepository.Add(player);
+
+            return string.Format(ConstantMessages.SuccessfullyAddedPlayer, player.GetType().Name, player.Username);
+        }
+
+        public string AddCard(string type, string name)
+        {
+            ICard card = this.cardFactory.CreateCard(type, name);
+
+            this.cardRepository.Add(card);
+
+            return string.Format(ConstantMessages.SuccessfullyAddedCard, card.GetType().Name, card.Name);
+        }
+
+        public string AddPlayerCard(string username, string cardName)
+        {
+            IPlayer player = this.playerRepository.Players.FirstOrDefault(p => p.Username == username);
+            ICard card = this.cardRepository.Cards.FirstOrDefault(c => c.Name == cardName);
+
+            player.CardRepository.Add(card);
+
+            return string.Format(ConstantMessages.SuccessfullyAddedPlayerWithCards, card.Name, player.Username);
+        }
+
+        public string Fight(string attackUser, string enemyUser)
+        {
+            IPlayer attackPlayer = this.playerRepository.Players.FirstOrDefault(p => p.Username == attackUser);
+            IPlayer enemyPlayer = this.playerRepository.Players.FirstOrDefault(p => p.Username == enemyUser);
+
+            battleField.Fight(attackPlayer, enemyPlayer);
+
+            return string.Format(ConstantMessages.FightInfo, attackPlayer.Health, enemyPlayer.Health);
+        }
+
+        public string Report()
+        {
+            StringBuilder sb = new StringBuilder();
+
+            foreach (IPlayer player in this.playerRepository.Players)
+            {
+                sb.AppendLine(string.Format(ConstantMessages.PlayerReportInfo, player.Username, player.Health, player.CardRepository.Count));
+
+                foreach (ICard card in player.CardRepository.Cards)
+                {
+                    sb.AppendLine(string.Format(ConstantMessages.CardReportInfo, card.Name, card.DamagePoints));
+                }
+
+                sb.AppendLine(ConstantMessages.DefaultReportSeparator);
+            }
+
+            return sb.ToString().TrimEnd();
+        }
+    }
+}
+
+
+***********************************
+
+
+namespace PlayersAndMonsters.Core.Factories
+{
+    using System;
+    using System.Reflection;
+    using System.Linq;
+    using PlayersAndMonsters.Core.Factories.Contracts;
+    using PlayersAndMonsters.Models.Cards.Contracts;
+
+    public class CardFactory : ICardFactory
+    {
+        public ICard CreateCard(string type, string name)
+        {
+            Type cardType = Assembly
+                .GetCallingAssembly()
+                .GetTypes()
+                .FirstOrDefault(t => t.Name == type + "Card");
+
+            ICard card = (ICard)Activator.CreateInstance(cardType, name);
+
+            return card;
+        }
+    }
+}
+
+
+****************************************
+
+
+namespace PlayersAndMonsters.Core.Factories
+{
+    using System;
+    using System.Linq;
+    using System.Reflection;
+    using PlayersAndMonsters.Core.Factories.Contracts;
+    using PlayersAndMonsters.Models.Players.Contracts;
+    using PlayersAndMonsters.Repositories;
+    using PlayersAndMonsters.Repositories.Contracts;
+
+    public class PlayerFactory : IPlayerFactory
+    {
+        public IPlayer CreatePlayer(string type, string username)
+        {
+            Type playerType = Assembly
+                .GetCallingAssembly()
+                .GetTypes()
+                .FirstOrDefault(t => t.Name == type);
+
+            ICardRepository cardRepository = new CardRepository();
+
+            IPlayer player = (IPlayer)Activator.CreateInstance(playerType, cardRepository, username);
+
+            return player;
+        }
+    }
+}
+
+
+*************************************
+
+namespace PlayersAndMonsters.Core.Factories.Contracts
+{
+    using PlayersAndMonsters.Models.Cards.Contracts;
+
+    public interface ICardFactory
+    {
+        ICard CreateCard(string type, string name);
+    }
+}
+
+
+*************************************
+
+
+namespace PlayersAndMonsters.Core.Factories.Contracts
+{
+    using PlayersAndMonsters.Models.Players.Contracts;
+
+    public interface IPlayerFactory
+    {
+        IPlayer CreatePlayer(string type, string username);
+    }
+}
+
+
+*************************************
+
+namespace PlayersAndMonsters.Core.Contracts
+{
+    public interface ICommandInterpreter
+    {
+        string Execute(string[] inputArgs);
+    }
+}
+
+
+*************************************
+
+namespace PlayersAndMonsters.Core.Contracts
+{
+    public interface IEngine
+    {
+        void Run();
+    }
+}
+
+
+**************************************
+
+
+namespace PlayersAndMonsters.Core.Contracts
+{
+    public interface IManagerController
+    {
+        string AddPlayer(string type, string username);
+
+        string AddCard(string type, string name);
+
+        string AddPlayerCard(string username, string cardName);
+
+        string Fight(string attackUser, string enemyUser);
+
+        string Report();
+    }
+}
+
+
+*************************************
+
+
+namespace PlayersAndMonsters.IO
+{
+    using PlayersAndMonsters.IO.Contracts;
+    using System;
+
+    public class Reader : IReader
+    {
+        public string ReadLine()
+        {
+            return Console.ReadLine();
+        }
+    }
+}
+
+
+*******************************
+
+
+namespace PlayersAndMonsters.IO
+{
+    using System;
+    using PlayersAndMonsters.IO.Contracts;
+
+    public class Writer : IWriter
+    {
+        public void Write(string message)
+        {
+            Console.Write(message);
+        }
+
+        public void WriteLine(string message)
+        {
+            Console.WriteLine(message);
+        }
+    }
+}
+
+
+*********************************
+
+
+namespace PlayersAndMonsters.IO.Contracts
+{
+    public interface IReader
+    {
+        string ReadLine();
+    }
+}
+
+
+********************************
+
+namespace PlayersAndMonsters.IO.Contracts
+{
+    public interface IWriter
+    {
+        void WriteLine(string message);
+
+        void Write(string message);
+    }
+}
+
+
+*******************************
+
+
+namespace PlayersAndMonsters.Models.BattleFields
+{
+    using System;
+    using System.Linq;
+    using PlayersAndMonsters.Models.BattleFields.Contracts;
+    using PlayersAndMonsters.Models.Cards.Contracts;
+    using PlayersAndMonsters.Models.Players;
+    using PlayersAndMonsters.Models.Players.Contracts;
+
+    public class BattleField : IBattleField
+    {
+        public void Fight(IPlayer attackPlayer, IPlayer enemyPlayer)
+        {
+            if (attackPlayer.IsDead || enemyPlayer.IsDead)
+            {
+                throw new ArgumentException("Player is dead!");
+            }
+
+            CheckForBeginners(attackPlayer, enemyPlayer);
+
+            attackPlayer.Health += attackPlayer.CardRepository.Cards.Sum(c => c.HealthPoints);
+            enemyPlayer.Health += enemyPlayer.CardRepository.Cards.Sum(c => c.HealthPoints);
+
+            while (!attackPlayer.IsDead && !enemyPlayer.IsDead)
+            {
+                enemyPlayer.TakeDamage(attackPlayer.CardRepository.Cards.Sum(c => c.DamagePoints));
+
+                if (enemyPlayer.IsDead)
+                {
+                    break;
+                }
+
+                attackPlayer.TakeDamage(enemyPlayer.CardRepository.Cards.Sum(c => c.DamagePoints));
+            }
+        }
+
+        private void CheckForBeginners(IPlayer attackPlayer, IPlayer enemyPlayer)
+        {
+            if (attackPlayer.GetType() == typeof(Beginner))
+            {
+                attackPlayer.Health += 40;
+
+                foreach (ICard card in attackPlayer.CardRepository.Cards)
+                {
+                    card.DamagePoints += 30;
+                }
+            }
+
+            if (enemyPlayer.GetType() == typeof(Beginner))
+            {
+                enemyPlayer.Health += 40;
+
+                foreach (ICard card in enemyPlayer.CardRepository.Cards)
+                {
+                    card.DamagePoints += 30;
+                }
+            }
+        }
+    }
+}
+
+
+************************************
+
+
+namespace PlayersAndMonsters.Models.BattleFields.Contracts
+{
+    using Players.Contracts;
+
+    public interface IBattleField
+    {
+        void Fight(IPlayer attackPlayer, IPlayer enemyPlayer);
+    }
+}
+
+
+********************************
+
+
+namespace PlayersAndMonsters.Models.Cards
+{
+    using PlayersAndMonsters.Common;
+    using PlayersAndMonsters.Models.Cards.Contracts;
+
+    public class Card : ICard
+    {
+        private string name;
+        private int damagePoints;
+        private int healthPoints;
+
+        public Card(string name, int damagePoints, int healthPoints)
+        {
+            this.Name = name;
+            this.DamagePoints = damagePoints;
+            this.HealthPoints = healthPoints;
+        }
+
+        public string Name
+        {
+            get
+            {
+                return this.name;
+            }
+            private set
+            {
+                Validator.ThrowIfNullOrEmpty(value, "Card's name cannot be null or an empty string.");
+
+                this.name = value;
+            }
+        }
+
+        public int DamagePoints
+        {
+            get
+            {
+                return this.damagePoints;
+            }
+            set
+            {
+                Validator.ThrowIfNegative(value, "Card's damage points cannot be less than zero.");
+
+                this.damagePoints = value;
+            }
+        }
+
+        public int HealthPoints
+        {
+            get
+            {
+                return this.healthPoints;
+            }
+            private set
+            {
+                Validator.ThrowIfNegative(value, "Card's HP cannot be less than zero.");
+
+                this.healthPoints = value;
+            }
+        }
+    }
+}
+
+
+****************************
+
+
+namespace PlayersAndMonsters.Models.Cards
+{
+    public class MagicCard : Card
+    {
+        private const int DAMAGE_POINTS = 5;
+        private const int HEALTH_POINTS = 80;
+
+        public MagicCard(string name) 
+            : base(name, DAMAGE_POINTS, HEALTH_POINTS)
+        {
+        }
+    }
+}
+
+
+*************************************
+
+
+namespace PlayersAndMonsters.Models.Cards
+{
+    public class TrapCard : Card
+    {
+        private const int DAMAGE_POINTS = 120;
+        private const int HEALTH_POINTS = 5;
+
+        public TrapCard(string name) 
+            : base(name, DAMAGE_POINTS, HEALTH_POINTS)
+        {
+        }
+    }
+}
+
+
+****************************
+
+
+namespace PlayersAndMonsters.Models.Cards.Contracts
+{
+    public interface ICard
+    {
+        string Name { get; }
+
+        int DamagePoints { get; set; }
+
+        int HealthPoints { get; }
+    }
+}
+
+
+*****************************
+
+
+namespace PlayersAndMonsters.Models.Players
+{
+    using PlayersAndMonsters.Repositories.Contracts;
+
+    public class Advanced : Player
+    {
+        private const int INITIAL_HEALTH_POINTS = 250;
+
+        public Advanced(ICardRepository cardRepository, string username) 
+            : base(cardRepository, username, INITIAL_HEALTH_POINTS)
+        {
+        }
+    }
+}
+
+
+*****************************
+
+
+namespace PlayersAndMonsters.Models.Players
+{
+    using PlayersAndMonsters.Repositories.Contracts;
+
+    public class Beginner : Player
+    {
+        private const int INITIAL_HEALTH_POINTS = 50;
+
+        public Beginner(ICardRepository cardRepository, string username) 
+            : base(cardRepository, username, INITIAL_HEALTH_POINTS)
+        {
+        }
+    }
+}
+
+
+*************************************
+
+
+namespace PlayersAndMonsters.Models.Players
+{
+    using System;
+    using PlayersAndMonsters.Common;
+    using PlayersAndMonsters.Models.Players.Contracts;
+    using PlayersAndMonsters.Repositories.Contracts;
+
+    public abstract class Player : IPlayer
+    {
+        private string username;
+        private int health;
+
+        public Player(ICardRepository cardRepository, string username, int health)
+        {
+            this.CardRepository = cardRepository;
+            this.Username = username;
+            this.Health = health;
+        }
+
+        public ICardRepository CardRepository { get; }
+
+        public string Username
+        {
+            get
+            {
+                return this.username;
+            }
+            private set
+            {
+                Validator.ThrowIfNullOrEmpty(value, "Player's username cannot be null or an empty string.");
+
+                this.username = value;
+            }
+        }
+
+        public int Health
+        {
+            get
+            {
+                return this.health;
+            }
+            set
+            {
+                Validator.ThrowIfNegative(value, "Player's health bonus cannot be less than zero.");
+
+                this.health = value;
+            }
+        }
+
+        public bool IsDead => this.Health == 0;
+
+        public void TakeDamage(int damagePoints)
+        {
+            Validator.ThrowIfNegative(damagePoints, "Damage points cannot be less than zero.");
+
+            this.Health = Math.Max(0, this.Health - damagePoints);
+        }
+    }
+}
+
+
+********************************
+
+
+namespace PlayersAndMonsters.Models.Players.Contracts
+{
+    using PlayersAndMonsters.Repositories.Contracts;
+
+    public interface IPlayer
+    {
+        ICardRepository CardRepository { get; }
+
+        string Username { get; }
+
+        int Health { get; set; }
+
+        bool IsDead { get; }
+
+        void TakeDamage(int damagePoints);
+    }
+}
+
+
+***********************************
+
+
+namespace PlayersAndMonsters.Repositories
+{
+    using System;
+    using System.Collections.Generic;
+    using System.Linq;
+    using PlayersAndMonsters.Common;
+    using PlayersAndMonsters.Models.Cards.Contracts;
+    using PlayersAndMonsters.Repositories.Contracts;
+
+    public class CardRepository : ICardRepository
+    {
+        private List<ICard> cards;
+
+        public CardRepository()
+        {
+            this.cards = new List<ICard>();
+        }
+
+        public int Count => this.cards.Count;
+
+        public IReadOnlyCollection<ICard> Cards => this.cards;
+
+        public void Add(ICard card)
+        {
+            Validator.ThrowIfNull(card, "Card cannot be null!");
+
+            if (this.cards.Any(c => c.Name == card.Name))
+            {
+                throw new ArgumentException($"Card {card.Name} already exists!");
+            }
+
+            this.cards.Add(card);
+        }
+
+        public ICard Find(string name)
+        {
+            ICard card = this.cards.First(c => c.Name == name);
+
+            return card;
+        }
+
+        public bool Remove(ICard card)
+        {
+            Validator.ThrowIfNull(card, "Card cannot be null!");
+
+            return this.cards.Remove(card);
+        }
+    }
+}
+
+
+*****************************
+
+
+namespace PlayersAndMonsters.Repositories
+{
+    using System;
+    using System.Linq; 
+    using System.Collections.Generic;
+    using PlayersAndMonsters.Common;
+    using PlayersAndMonsters.Models.Players.Contracts;
+    using PlayersAndMonsters.Repositories.Contracts;
+
+    public class PlayerRepository : IPlayerRepository
+    {
+        private List<IPlayer> players;
+
+        public PlayerRepository()
+        {
+            this.players = new List<IPlayer>();
+        }
+
+        public int Count => this.players.Count;
+
+        public IReadOnlyCollection<IPlayer> Players => this.players;
+
+        public void Add(IPlayer player)
+        {
+            Validator.ThrowIfNull(player, "Player cannot be null");
+
+            if (this.players.Any(p => p.Username == player.Username))
+            {
+                throw new ArgumentException($"Player {player.Username} already exists!");
+            }
+
+            this.players.Add(player);
+        }
+
+        public IPlayer Find(string username)
+        {
+            IPlayer player = this.players.First(p => p.Username == username);
+
+            return player;
+        }
+
+        public bool Remove(IPlayer player)
+        {
+            Validator.ThrowIfNull(player, "Player cannot be null");
+
+            return this.players.Remove(player);
+        }
+    }
+}
+
+
+***************************
+
+
+namespace PlayersAndMonsters.Repositories.Contracts
+{
+    using System.Collections.Generic;
+
+    using Models.Cards.Contracts;
+
+    public interface ICardRepository
+    {
+        int Count { get; }
+
+        IReadOnlyCollection<ICard> Cards { get; }
+
+        void Add(ICard card);
+
+        bool Remove(ICard card);
+
+        ICard Find(string name);
+    }
+}
+
+
+******************************
+
+
+namespace PlayersAndMonsters.Repositories.Contracts
+{
+    using System.Collections.Generic;
+
+    using Models.Players.Contracts;
+
+    public interface IPlayerRepository
+    {
+        int Count { get; }
+
+        IReadOnlyCollection<IPlayer> Players { get; }
+
+        void Add(IPlayer player);
+
+        bool Remove(IPlayer player);
+
+        IPlayer Find(string username);
+    }
+}
+
+
+***************************************
+
+
+
+namespace PlayersAndMonsters
+{
+    using Core;
+    using Core.Contracts;
+    using Core.Factories;
+    using Core.Factories.Contracts;
+    using Repositories;
+    using Repositories.Contracts;
+    using IO;
+    using IO.Contracts;
+    using Models.BattleFields;
+    using Models.BattleFields.Contracts;
+
+    public class StartUp
+    {
+        public static void Main(string[] args)
+        {
+            IPlayerRepository playerRepository = new PlayerRepository();
+            ICardRepository cardRepository = new CardRepository();
+            IPlayerFactory playerFactory = new PlayerFactory();
+            ICardFactory cardFactory = new CardFactory();
+            IBattleField battleField = new BattleField();
+
+            IManagerController managerController = new ManagerController(playerRepository, cardRepository, playerFactory, cardFactory, battleField);
+            ICommandInterpreter commandInterpreter = new CommandInterpreter(managerController);
+
+            IReader reader = new Reader();
+            IWriter writer = new Writer();
+
+            IEngine engine = new Engine(commandInterpreter, reader, writer);
+
+            engine.Run();            
+        }
+    }
+}
+
+
+********************************
+
+
+
