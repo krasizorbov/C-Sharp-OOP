@@ -1,0 +1,822 @@
+namespace MortalEngines.Common
+{
+    public class OutputMessages
+    {
+        public const string PilotHired = "Pilot {0} hired";
+
+        public const string PilotExists = "Pilot {0} is hired already";
+
+        public const string TankManufactured = "Tank {0} manufactured - attack: {1:F2}; defense: {2:F2}";
+
+        public const string FighterManufactured = "Fighter {0} manufactured - attack: {1:F2}; defense: {2:F2}; aggressive: {3}";
+
+        public const string MachineExists = "Machine {0} is manufactured already";
+
+        public const string MachineHasPilotAlready = "Machine {0} is already occupied";
+
+        public const string PilotNotFound = "Pilot {0} could not be found";
+
+        public const string MachineNotFound = "Machine {0} could not be found";
+
+        public const string MachineEngaged = "Pilot {0} engaged machine {1}";
+
+        public const string FighterOperationSuccessful = "Fighter {0} toggled aggressive mode";
+
+        public const string TankOperationSuccessful = "Tank {0} toggled defense mode";
+
+        public const string AttackSuccessful = "Machine {0} was attacked by machine {1} - current health: {2:F2}";
+
+        public const string DeadMachineCannotAttack = "Dead machine {0} cannot attack or be attacked";
+    }
+}
+
+
+*********************************
+
+namespace MortalEngines.Common
+{
+    using System;
+
+    public static class Validator
+    {
+        public static void ThrowIfNullOrWhitespace(string str, string message)
+        {
+            if (string.IsNullOrWhiteSpace(str))
+            {
+                throw new ArgumentNullException(message);
+            }
+        }
+
+        public static void ThrowIfNull(object obj, string message)
+        {
+            if (obj == null)
+            {
+                throw new NullReferenceException(message);
+            }
+        }
+    }
+}
+
+
+**************************************
+
+
+namespace MortalEngines.Core
+{
+    using System.Linq;
+    using System.Reflection;
+    using System.Collections.Generic;
+    using MortalEngines.Core.Contracts;
+
+    public class CommandInterpreter : ICommandInterpreter
+    {
+        private IMachinesManager machinesManager;
+
+        public CommandInterpreter(IMachinesManager machinesManager)
+        {
+            this.machinesManager = machinesManager;
+        }
+
+        public string Read(string[] args)
+        {
+            string[] commandArgs = args
+                .Skip(1)
+                .ToArray();
+            string commandName = args[0];
+
+            if (commandName == "AggressiveMode")
+            {
+                commandName = "ToggleFighterAggressiveMode";
+            }
+            else if (commandName == "DefenseMode")
+            {
+                commandName = "ToggleTankDefenseMode";
+            }
+            else if (commandName == "Engage")
+            {
+                commandName = "EngageMachine";
+            }
+            else if (commandName == "Attack")
+            {
+                commandName = "AttackMachines";
+            }
+
+            MethodInfo managerMethod = typeof(MachinesManager)
+                .GetMethod(commandName);
+
+            List<object> requiredParameters = new List<object>();
+
+            foreach (var argument in commandArgs)
+            {
+                if (double.TryParse(argument, out double parsedArgument))
+                {
+                    requiredParameters.Add(parsedArgument);
+
+                    continue;
+                }
+
+                requiredParameters.Add(argument);
+            }
+
+            string result = (string)managerMethod.Invoke(this.machinesManager, requiredParameters.ToArray());
+
+            return result;
+        }
+    }
+}
+
+
+*****************************************
+
+namespace MortalEngines.Core
+{
+    using System;
+    using System.Reflection;
+    using MortalEngines.Core.Contracts;
+
+    public class Engine : IEngine
+    {
+        private ICommandInterpreter commandInterpreter;
+
+        public Engine(ICommandInterpreter commandInterpreter)
+        {
+            this.commandInterpreter = commandInterpreter;
+        }
+
+        public void Run()
+        {
+            string input = Console.ReadLine();
+
+            while (input != "Quit")
+            {
+                string[] inputArgs = input
+                    .Split(" ", StringSplitOptions.RemoveEmptyEntries);
+
+                try
+                {
+                    string result = this.commandInterpreter.Read(inputArgs);
+                    Console.WriteLine(result);
+                }
+                catch (TargetInvocationException ex)
+                {
+                    Console.WriteLine($"Error: {ex.InnerException.Message}");
+                }
+
+                input = Console.ReadLine();
+            }
+        }
+    }
+}
+
+
+************************************
+
+
+namespace MortalEngines.Core
+{
+    using System.Linq;
+    using Contracts;
+    using MortalEngines.Common;
+    using MortalEngines.Entities;
+    using MortalEngines.Entities.Contracts;
+    using MortalEngines.Repositories.Contracts;
+
+    public class MachinesManager : IMachinesManager
+    {
+        private IPilotRepository pilotRepository;
+        private IMachineRepository machineRepository;
+        private IPilotFactory pilotFactory;
+        private IMachineFactory machineFactory;
+
+        public MachinesManager(IPilotRepository pilotRepository, IMachineRepository machineRepository, IPilotFactory pilotFactory, IMachineFactory machineFactory)
+        {
+            this.pilotRepository = pilotRepository;
+            this.machineRepository = machineRepository;
+            this.pilotFactory = pilotFactory;
+            this.machineFactory = machineFactory;
+        }
+
+        public string HirePilot(string name)
+        {
+            if (this.pilotRepository.ContainsPilot(name))
+            {
+                return string.Format(OutputMessages.PilotExists, name);
+            }
+
+            IPilot pilot = this.pilotFactory.CreatePilot(name);
+
+            this.pilotRepository.AddPilot(pilot);
+
+            return string.Format(OutputMessages.PilotHired, name); 
+        }
+
+        public string ManufactureTank(string name, double attackPoints, double defensePoints)
+        {
+            if (this.machineRepository.ContainsMachine(name))
+            {
+                return string.Format(OutputMessages.MachineExists, name);
+            }
+
+            IMachine tank = this.machineFactory.CreateMachine(nameof(Tank), name, attackPoints, defensePoints);
+
+            this.machineRepository.AddMachine(tank);
+
+            return string.Format(OutputMessages.TankManufactured, tank.Name, tank.AttackPoints, tank.DefensePoints);
+        }
+
+        public string ManufactureFighter(string name, double attackPoints, double defensePoints)
+        {
+            if (this.machineRepository.ContainsMachine(name))
+            {
+                return string.Format(OutputMessages.MachineExists, name);
+            }
+
+            IMachine fighter = this.machineFactory.CreateMachine(nameof(Fighter), name, attackPoints, defensePoints);
+
+            this.machineRepository.AddMachine(fighter);
+
+            bool isAggressive = ((IFighter)fighter).AggressiveMode;
+
+            if (isAggressive)
+            {
+                return string.Format(OutputMessages.FighterManufactured, fighter.Name, fighter.AttackPoints, fighter.DefensePoints, "ON");
+            }
+
+            return string.Format(OutputMessages.FighterManufactured, fighter.Name, fighter.AttackPoints, fighter.DefensePoints, "OFF");
+        }
+
+        public string EngageMachine(string selectedPilotName, string selectedMachineName)
+        {
+            IPilot pilot = this.pilotRepository.Pilots.FirstOrDefault(p => p.Name == selectedPilotName);
+            IMachine machine = this.machineRepository.Machines.FirstOrDefault(m => m.Name == selectedMachineName);
+
+            if (pilot == null)
+            {
+                return string.Format(OutputMessages.PilotNotFound, selectedPilotName);
+            }
+
+            if (machine == null)
+            {
+                return string.Format(OutputMessages.MachineNotFound, selectedMachineName);
+            }
+
+            if (machine.Pilot != null)
+            {
+                return string.Format(OutputMessages.MachineHasPilotAlready, selectedMachineName);
+            }
+
+            pilot.AddMachine(machine);
+            machine.Pilot = pilot;
+
+            return string.Format(OutputMessages.MachineEngaged, selectedPilotName, selectedMachineName);
+        }
+
+        public string AttackMachines(string attackingMachineName, string defendingMachineName)
+        {
+            IMachine attackingMachine = this.machineRepository.Machines.FirstOrDefault(m => m.Name == attackingMachineName);
+            IMachine defendingMachine = this.machineRepository.Machines.FirstOrDefault(m => m.Name == defendingMachineName);
+
+            if (attackingMachine == null)
+            {
+                return string.Format(OutputMessages.MachineNotFound, attackingMachineName);
+            }
+
+            if (defendingMachine == null)
+            {
+                return string.Format(OutputMessages.MachineNotFound, defendingMachineName);
+            }
+
+            if (attackingMachine.HealthPoints <= 0)
+            {
+                return string.Format(OutputMessages.DeadMachineCannotAttack, attackingMachineName);
+            }
+
+            if (defendingMachine.HealthPoints <= 0)
+            {
+                return string.Format(OutputMessages.DeadMachineCannotAttack, defendingMachineName);
+            }
+
+            attackingMachine.Attack(defendingMachine);
+
+            return string.Format(OutputMessages.AttackSuccessful, defendingMachineName, attackingMachineName, defendingMachine.HealthPoints);
+        }
+
+        public string PilotReport(string pilotReporting)
+        {
+            IPilot pilot = this.pilotRepository.Pilots.First(p => p.Name == pilotReporting);            
+
+            return pilot.Report();
+        }
+
+        public string MachineReport(string machineName)
+        {
+            IMachine machine = this.machineRepository.Machines.First(m => m.Name == machineName);
+
+            return machine.ToString();
+        }
+
+        public string ToggleFighterAggressiveMode(string fighterName)
+        {
+            if (!this.machineRepository.ContainsMachine(fighterName))
+            {
+                return string.Format(OutputMessages.MachineNotFound, fighterName);
+            }
+
+            IMachine fighter = this.machineRepository.Machines.First(m => m.Name == fighterName);
+
+            ((IFighter)fighter).ToggleAggressiveMode();
+
+            return string.Format(OutputMessages.FighterOperationSuccessful, fighterName);
+        }
+
+        public string ToggleTankDefenseMode(string tankName)
+        {
+            if (!this.machineRepository.ContainsMachine(tankName))
+            {
+                return string.Format(OutputMessages.MachineNotFound, tankName);
+            }
+
+            IMachine tank = this.machineRepository.Machines.First(m => m.Name == tankName);
+
+            ((ITank)tank).ToggleDefenseMode();
+
+            return string.Format(OutputMessages.TankOperationSuccessful, tankName);
+        }
+    }
+}
+
+
+*****************************
+
+namespace MortalEngines.Core.Factories
+{
+    using System;
+    using System.Linq;
+    using System.Reflection;
+    using MortalEngines.Core.Contracts;
+    using MortalEngines.Entities.Contracts;
+
+    public class MachineFactory : IMachineFactory
+    {
+        public IMachine CreateMachine(string type, string name, double attack, double defense)
+        {
+            Type machineType = Assembly
+                .GetCallingAssembly()
+                .GetTypes()
+                .First(t => t.Name == type);
+
+            IMachine machine =(IMachine)Activator.CreateInstance(machineType, new object[] { name, attack, defense });
+
+            return machine;
+        }
+    }
+}
+
+
+*************************************
+
+
+namespace MortalEngines.Core.Factories
+{
+    using MortalEngines.Core.Contracts;
+    using MortalEngines.Entities;
+    using MortalEngines.Entities.Contracts;
+
+    public class PilotFactory : IPilotFactory
+    {
+        public IPilot CreatePilot(string name)
+        {
+            IPilot pilot = new Pilot(name);
+
+            return pilot;
+        }
+    }
+}
+
+
+*************************************
+
+namespace MortalEngines.Entities
+{
+    using System.Text;
+    using System.Collections.Generic;
+    using MortalEngines.Common;
+    using MortalEngines.Entities.Contracts;
+
+    public abstract class BaseMachine : IMachine
+    {
+        private string name;
+        private IPilot pilot;
+
+        public BaseMachine(string name, double attackPoints, double defensePoints, double healthPoints)
+        {
+            this.Name = name;
+            this.AttackPoints = attackPoints;
+            this.DefensePoints = defensePoints;
+            this.HealthPoints = healthPoints;
+            this.Targets = new List<string>();
+        }
+
+        public string Name
+        {
+            get
+            {
+                return this.name;
+            }
+            private set
+            {
+                Validator.ThrowIfNullOrWhitespace(value, "Machine name cannot be null or empty.");
+
+                this.name = value;
+            }
+        }
+
+        public IPilot Pilot
+        {
+            get
+            {
+                return this.pilot;
+            }
+            set
+            {
+                Validator.ThrowIfNull(value, "Pilot cannot be null.");
+
+                this.pilot = value;
+            }
+        }
+
+        public double AttackPoints { get; protected set; }
+
+        public double DefensePoints { get; protected set; }
+
+        public double HealthPoints { get; set; }
+
+        public IList<string> Targets { get; private set; }
+
+        public void Attack(IMachine target)
+        {
+            Validator.ThrowIfNull(target, "Target cannot be null");
+
+            target.HealthPoints -= this.AttackPoints - target.DefensePoints;
+
+            if (target.HealthPoints < 0)
+            {
+                target.HealthPoints = 0;
+            }
+
+            this.Targets.Add(target.Name);
+        }
+
+        public override string ToString()
+        {
+            StringBuilder sb = new StringBuilder();
+
+            sb.AppendLine($"- {this.Name}");
+            sb.AppendLine($" *Type: {this.GetType().Name}");
+            sb.AppendLine($" *Health: {this.HealthPoints:F2}");
+            sb.AppendLine($" *Attack: {this.AttackPoints:F2}");
+            sb.AppendLine($" *Defense: {this.DefensePoints:F2}");
+
+            if (this.Targets.Count == 0)
+            {
+                sb.AppendLine($" *Targets: None");
+            }
+            else
+            {
+                sb.AppendLine($" *Targets: {string.Join(",", this.Targets)}");
+            }
+
+            return sb.ToString().TrimEnd();
+        }
+    }
+}
+
+
+***************************************
+
+
+namespace MortalEngines.Entities
+{
+    using System;
+    using MortalEngines.Entities.Contracts;
+
+    public class Fighter : BaseMachine, IFighter
+    {
+        private const int INITIAL_HEALTH_POINTS = 200;
+
+        public Fighter(string name, double attackPoints, double defensePoints) 
+            : base(name, attackPoints + 50, defensePoints - 25, INITIAL_HEALTH_POINTS)
+        {
+            this.AggressiveMode = true;
+        }
+
+        public bool AggressiveMode { get; private set; }
+
+        public void ToggleAggressiveMode()
+        {
+            this.FlipAgressiveMode();
+            this.UpdatePoints();
+        }
+
+        public override string ToString()
+        {
+            string aggressiveString = string.Empty;
+
+            if (this.AggressiveMode == false)
+            {
+                aggressiveString = " *Aggressive: OFF";
+            }
+            else
+            {
+                aggressiveString = " *Aggressive: ON";
+            }
+
+            return base.ToString() + Environment.NewLine + aggressiveString;
+        }
+
+        private void UpdatePoints()
+        {
+            if (this.AggressiveMode == true)
+            {
+                this.AttackPoints += 50;
+
+                this.DefensePoints -= 25;
+            }
+            else
+            {
+                this.AttackPoints -= 50;
+
+                this.DefensePoints += 25;
+            }
+        }
+
+        private void FlipAgressiveMode()
+        {
+            this.AggressiveMode = !this.AggressiveMode;
+        }
+    }
+}
+
+
+**************************************
+
+
+namespace MortalEngines.Entities
+{
+    using System.Text;
+    using System.Collections.Generic;
+    using MortalEngines.Common;
+    using MortalEngines.Entities.Contracts;
+
+    public class Pilot : IPilot
+    {
+        private string name;
+        private List<IMachine> machines;
+
+        private Pilot()
+        {
+            this.machines = new List<IMachine>();
+        }
+
+        public Pilot(string name)
+            : this()
+        {
+            this.Name = name;
+        }
+
+        public string Name
+        {
+            get
+            {
+                return this.name;
+            }
+            private set
+            {
+                Validator.ThrowIfNullOrWhitespace(value, "Pilot name cannot be null or empty string.");
+
+                this.name = value;
+            }
+        }
+
+        public void AddMachine(IMachine machine)
+        {
+            Validator.ThrowIfNull(machine, "Null machine cannot be added to the pilot.");
+
+            this.machines.Add(machine);
+        }
+
+        public string Report()
+        {
+            StringBuilder sb = new StringBuilder();
+
+            sb.AppendLine($"{this.Name} - {this.machines.Count} machines");
+
+            foreach (IMachine machine in this.machines)
+            {
+                sb.AppendLine(machine.ToString().TrimEnd());
+            }
+
+            return sb.ToString().TrimEnd();
+        }
+    }
+}
+
+
+********************************
+
+namespace MortalEngines.Entities
+{
+    using System;
+    using MortalEngines.Entities.Contracts;
+
+    public class Tank : BaseMachine, ITank
+    {
+        private const int INITIAL_HEALTH_POINTS = 100;
+
+        public Tank(string name, double attackPoints, double defensePoints) 
+            : base(name, attackPoints - 40, defensePoints + 30, INITIAL_HEALTH_POINTS)
+        {
+            this.DefenseMode = true;
+        }
+
+        public bool DefenseMode { get; private set; }
+
+        public override string ToString()
+        {
+            string defenseString = string.Empty;
+
+            if (this.DefenseMode == false)
+            {
+                defenseString = " *Defense: OFF";
+            }
+            else
+            {
+                defenseString = " *Defense: ON";
+            }
+
+            return base.ToString() + Environment.NewLine + defenseString;
+        }
+
+        public void ToggleDefenseMode()
+        {
+            this.FlipDefenseMode();
+            this.UpdatePoints();
+        }
+
+        private void UpdatePoints()
+        {
+            if (this.DefenseMode == true)
+            {
+                this.AttackPoints -= 40;
+
+                this.DefensePoints += 30;
+            }
+            else
+            {
+                this.AttackPoints += 40;
+
+                this.DefensePoints -= 30;
+            }
+        }
+
+        private void FlipDefenseMode()
+        {
+            this.DefenseMode = !this.DefenseMode;
+        }
+    }
+}
+
+
+************************************
+
+
+namespace MortalEngines.Repositories
+{
+    using System.Linq;
+    using System.Collections.Generic;
+    using MortalEngines.Entities.Contracts;
+    using MortalEngines.Repositories.Contracts;
+
+    public class MachineRepository : IMachineRepository
+    {
+        private List<IMachine> machines;
+
+        public MachineRepository()
+        {
+            this.machines = new List<IMachine>();
+        }
+
+        public IReadOnlyCollection<IMachine> Machines => this.machines;
+
+        public void AddMachine(IMachine machine)
+        {
+            this.machines.Add(machine);
+        }
+
+        public void RemoveMachine(IMachine machine)
+        {
+            if (this.machines.Contains(machine))
+            {
+                this.machines.Remove(machine);
+            }
+        }
+
+        public bool ContainsMachine(string name)
+        {
+            if (this.machines.Any(m => m.Name == name))
+            {
+                return true;
+            }
+
+            return false;
+        }
+    }
+}
+
+
+************************************
+
+
+namespace MortalEngines.Repositories
+{
+    using System.Linq;
+    using System.Collections.Generic;
+    using MortalEngines.Entities.Contracts;
+    using MortalEngines.Repositories.Contracts;
+
+    public class PilotRepository : IPilotRepository
+    {
+        private List<IPilot> pilots;
+
+        public PilotRepository()
+        {
+            this.pilots = new List<IPilot>();
+        }
+
+        public IReadOnlyCollection<IPilot> Pilots => this.pilots;
+
+        public void AddPilot(IPilot pilot)
+        {
+            this.pilots.Add(pilot);
+        }
+
+        public void RemovePilot(IPilot pilot)
+        {
+            if (this.pilots.Contains(pilot))
+            {
+                this.pilots.Remove(pilot);
+            }
+        }
+
+        public bool ContainsPilot(string name)
+        {
+            if (this.pilots.Any(p => p.Name == name))
+            {
+                return true;
+            }
+
+            return false;
+        }
+    }
+}
+
+
+****************************
+
+using MortalEngines.Core;
+using MortalEngines.Core.Contracts;
+using MortalEngines.Core.Factories;
+using MortalEngines.Repositories;
+using MortalEngines.Repositories.Contracts;
+
+namespace MortalEngines
+{
+    public class StartUp
+    {
+        public static void Main()
+        {
+            IPilotRepository pilotRepository = new PilotRepository();
+            IMachineRepository machineRepository = new MachineRepository();
+            IPilotFactory pilotFactory = new PilotFactory();
+            IMachineFactory machineFactory = new MachineFactory();
+
+            IMachinesManager machinesManager = new MachinesManager(pilotRepository, machineRepository, pilotFactory, machineFactory);
+
+            ICommandInterpreter commandInterpreter = new CommandInterpreter(machinesManager);
+            IEngine engine = new Engine(commandInterpreter);
+
+            engine.Run();
+        } 
+    }
+}
+
+
+*********************************
+
+
+
+
+
+
+
+
